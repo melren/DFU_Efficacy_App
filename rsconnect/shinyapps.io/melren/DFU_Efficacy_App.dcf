@@ -1,0 +1,12 @@
+name: DFU_Efficacy_App
+title: DFU_Efficacy_App
+username:
+account: melren
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 485546
+bundleId: 1619147
+url: https://melren.shinyapps.io/DFU_Efficacy_App/
+when: 1538522440.74057
+asMultiple: FALSE
+asStatic: FALSE

@@ -1,9 +1,9 @@
+#.libPaths(c(normalizePath("./libs"), .libPaths()))
 library(shiny)
 library(shinyjs)
 library(ggplot2)
 library(dplyr)
-library(random.cdisc.data)
-library(tern)
+#library(tern)
 library(haven)
 library(shinydashboard)
 library(stringr)
@@ -14,56 +14,52 @@ library(survminer)
 #########################################################,
 #### Fetch Data
 #########################################################,
-regexp <- "[[:digit:]]+"
-
-ASL <- radam("ASL", N = 60,
-             arm_choices = c("COHORT A", "COHORT B", "COHORT C", "COHORT D", "COHORT E"),
-             start_with = list(
-               TRT = c("ACTIVE", "PLACEBO"),
-               CHRT = "",
-               CHRTGRP = "",
-               REGION = c("EU", "US"),
-               BASEUA = c("<= 2 (cm^2)", "> 2 (cm^2)"),
-               BASE = seq(3, 7, by= 0.1),
-               WEIGHT = seq(40, 90, by = 0.5),
-               HBA1C = seq(5.5, 12.2, by = 0.2),
-               SAFFL = c("Y", "N"),
-               ITTFL = c("Y", "N")
-               ))
-ASL <- ASL %>%
-  dplyr::mutate(AGE65 = ifelse(BAGE < 65, "< 65", ">= 65"),
+#regexp <- "[[:digit:]]+"
+N = 60
+ASL <- data.frame(matrix(nrow = 60, ncol = 1)) %>%
+  dplyr::mutate(USUBJID = c(1:60),
+                ARM = sample(c("COHORT A", "COHORT B", "COHORT C", "COHORT D", "COHORT E"), size = N, replace = TRUE)) %>%
+  dplyr::select(USUBJID, ARM) %>%
+  dplyr::mutate(TRT = sample(c("ACTIVE", "PLACEBO"), size = N, replace = TRUE),
                 CHRT = ifelse(TRT == "ACTIVE" & ARM %in% c("COHORT C", "COHORT D"), "COHORT C+D",
-                       ifelse(TRT == "ACTIVE", as.character(ARM),
-                       ifelse(ARM %in% c("COHORT A", "COHORT B", "COHORT E"), "NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D"))),
+                              ifelse(TRT == "ACTIVE", as.character(ARM),
+                                     ifelse(ARM %in% c("COHORT A", "COHORT B", "COHORT E"), "NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D"))),
                 CHRTGRP = ifelse(CHRT %in% c("COHORT A", "COHORT B", "COHORT E"), "COHORT A+B+E",
-                           ifelse(CHRT %in% c("COHORT D", "COHORT C"), "COHORT C+D", CHRT)),
-                TRT = factor(TRT),
-                ARM = factor(ARM),
+                                 ifelse(CHRT %in% c("COHORT D", "COHORT C"), "COHORT C+D", CHRT)),
                 CHRT = factor(CHRT, levels = c("NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D", "COHORT A", "COHORT B", "COHORT E", "COHORT C+D")),
                 CHRTGRP = factor(CHRTGRP, levels = c("NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D", "COHORT A+B+E", "COHORT C+D")),
-                USUBJID = str_extract(USUBJID, regexp),
-                USUBJID = as.numeric(USUBJID)
+                BAGE = sample(c(30:90), size = N, replace = TRUE),
+                AGE65 = ifelse(BAGE < 65, "< 65", ">= 65"),
+                REGION = sample(c("EU", "US"), size = N, replace = TRUE),
+                BASEUA = sample(c("<= 2 (cm^2)", "> 2 (cm^2)"), size = N, replace = TRUE),
+                BASE = sample(seq(3, 7, by= 0.1), size = N, replace = TRUE),
+                WEIGHT = sample(seq(40, 90, by = 0.5), size = N, replace = TRUE),
+                HBA1C = sample(seq(5.5, 12.2, by = 0.2), size = N, replace = TRUE),
+                SAFFL = sample(c("Y", "N"), size = N, replace = TRUE),
+                ITTFL = sample(c("Y", "N"), size = N, replace = TRUE),
+                TRT = factor(TRT),
+                ARM = factor(ARM)
                 )
 
+#ASL <- var_relabel(ASL, BAGE = "Age", SEX = "Sex", AGE65 = "Age group (years)", BASEUA = "Baseline Ulcer Area Category", BASE = "Baseline Ulcer Area (cm^2)",
+#                   HBA1C = "Baseline Hemoglobin A1C", WEIGHT = "Baseline Weight (kg)", REGION = "Region", USUBJID = "Subject Identifier",
+#                   ARM = "Study Arm", RACE = "Race", CHRT = "Treatment Group 1", TRT = "Treatment Group",
+#                   CHRTGRP ="Treatment Group 2", SAFFL = "Safety Flag", ITTFL = "Intent-to-Treat Flag", ARMCD = "Study Arm Code")
 
-ASL <- var_relabel(ASL, BAGE = "Age", SEX = "Sex", AGE65 = "Age group (years)", BASEUA = "Baseline Ulcer Area Category", BASE = "Baseline Ulcer Area (cm^2)",
-                   HBA1C = "Baseline Hemoglobin A1C", WEIGHT = "Baseline Weight (kg)", REGION = "Region", USUBJID = "Subject Identifier",
-                   STUDYID = "Study Number", ARM = "Study Arm", RACE = "Race", CHRT = "Treatment Group 1", TRT = "Treatment Group",
-                   CHRTGRP ="Treatment Group 2", SAFFL = "Safety Flag", ITTFL = "Intent-to-Treat Flag", ARMCD = "Study Arm Code")
-
-ATE <- radam("ATE", ADLS = ASL, N = 60)
-ATE <- ATE %>%
-  dplyr::mutate(PARAMCD = ifelse(PARAMCD == "OS", "TFUC", "TCUC"),
+ATE <- ASL %>%
+  dplyr::select(USUBJID) %>%
+  dplyr::slice(rep(1:n(), each = 2)) %>%
+  dplyr::mutate(PARAMCD = rep(c("TFUC", "TCUC"), length(unique(ASL$USUBJID))),
                 PARAM = ifelse(PARAMCD == "TFUC", "Time to First Ulcer Closure", "Time to Confirmed Ulcer Closure"),
-                CNSR = ifelse(CNSR, 1, 0),
-                AVAL = sample(c(8:150), size=nrow(ATE), replace = TRUE),
-                AVALU = "Day",
-                USUBJID = as.numeric(str_extract(USUBJID, regexp))) %>%
-  dplyr::select(-EVNTDESC) %>%
-  dplyr::left_join(ASL, by = c("USUBJID","STUDYID"))
+                CNSR = sample(c(0,0,0,1), size = N*2, replace = TRUE),
+                AVAL = sample(c(8:130), size=N*2, replace = TRUE),
+                AVALU = "Day") %>%
+  dplyr::left_join(ASL, by = c("USUBJID"))
 
-ATE <- var_relabel(ATE, USUBJID = "Subject Identifier", STUDYID = "Study Number", PARAMCD = "Parameter Code", 
-                   PARAM = "TTE Parameter Name", AVAL = "TTE Value", AVALU = "TTE Value Unit", CNSR = "Censor")
+
+
+#ATE <- var_relabel(ATE, USUBJID = "Subject Identifier", PARAMCD = "Parameter Code", 
+#                   PARAM = "TTE Parameter Name", AVAL = "TTE Value", AVALU = "TTE Value Unit", CNSR = "Censor")
 
 AZA <- ASL %>%
   dplyr::select(USUBJID) %>%
@@ -96,7 +92,6 @@ BM <- BM %>%
   dplyr::left_join(BM_base, by = c('USUBJID', 'ANALYTE')) %>%
   dplyr::mutate(CHG = round(AVAL - BASE,2),
                 PCHG = 100*CHG/BASE)
-#pchg
 
 #########################################################,
 #### Application Components
@@ -522,10 +517,12 @@ server <- function(input, output) {
   output$demo_tbl <- renderUI({
     data <- subsetData() %>%
       dplyr::mutate(CHRT = factor(CHRT))
-    as_html(
-      t_summary(x=data[,c("BAGE", "AGE65", "SEX", "RACE", "WEIGHT", "BASE", "BASEUA","HBA1C")], 
-                col_by = data$CHRT, total = "TOTAL")
-    )
+    p("This table is currently unavailable as it depends on an internal package with many other dependencies. 
+      I will update the sample app at a later date once I solve this package dependency issue.")
+    #as_html(
+    #  t_summary(x=data[,c("BAGE", "AGE65", "SEX", "RACE", "WEIGHT", "BASE", "BASEUA","HBA1C")], 
+    #            col_by = data$CHRT, total = "TOTAL")
+    #)
   })
   
   ################################,
