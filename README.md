@@ -13,4 +13,4 @@ This modified version of the app is only intended to be a sample to showcase the
 If errors for the plots appear, please open the Filter/Plot Options panel to refresh the input.
   * This is due to different types of plots requiring different parameters
   * When the panel is closed, previously unset variables are treated as NULL
-If the download plot button is not working, the plots can be downloaded from the right-click menu
+  * If the download plot button is not working, the plots can be downloaded from the right-click menu
