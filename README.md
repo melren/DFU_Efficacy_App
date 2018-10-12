@@ -1,5 +1,6 @@
 # DFU_Efficacy_App
 Sample application for exploratory efficacy analysis
+Working preview: https://melren.shinyapps.io/DFU_Efficacy_App/
 
 # About This App & Study Background
 This app was created as part of my internship projects at Genentech for the exploration of (mostly) efficacy endpoints of a randomized phase Ib study. The indication for this study is Diabetic Foot Ulcers (DFU) and the endpoints here are related to amount of ulcer healing (size) compared to baseline. 
