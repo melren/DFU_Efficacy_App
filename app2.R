@@ -3,13 +3,95 @@ library(shiny)
 library(shinyjs)
 library(ggplot2)
 library(dplyr)
+#library(tern)
 library(haven)
 library(shinydashboard)
 library(stringr)
 library(DT)
 library(Hmisc)
 library(survminer)
-library(effiplot)
+
+#########################################################,
+#### Fetch Data
+#########################################################,
+#regexp <- "[[:digit:]]+"
+N = 60
+ASL <- data.frame(matrix(nrow = 60, ncol = 1)) %>%
+  dplyr::mutate(USUBJID = c(1:60),
+                ARM = sample(c("COHORT A", "COHORT B", "COHORT C", "COHORT D", "COHORT E"), size = N, replace = TRUE)) %>%
+  dplyr::select(USUBJID, ARM) %>%
+  dplyr::mutate(TRT = sample(c("ACTIVE", "PLACEBO"), size = N, replace = TRUE),
+                CHRT = ifelse(TRT == "ACTIVE" & ARM %in% c("COHORT C", "COHORT D"), "COHORT C+D",
+                              ifelse(TRT == "ACTIVE", as.character(ARM),
+                                     ifelse(ARM %in% c("COHORT A", "COHORT B", "COHORT E"), "NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D"))),
+                CHRTGRP = ifelse(CHRT %in% c("COHORT A", "COHORT B", "COHORT E"), "COHORT A+B+E",
+                                 ifelse(CHRT %in% c("COHORT D", "COHORT C"), "COHORT C+D", CHRT)),
+                CHRT = factor(CHRT, levels = c("NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D", "COHORT A", "COHORT B", "COHORT E", "COHORT C+D")),
+                CHRTGRP = factor(CHRTGRP, levels = c("NON-INFECTED PLACEBO A+B+E", "INFECTED PLACEBO C+D", "COHORT A+B+E", "COHORT C+D")),
+                BAGE = sample(c(30:90), size = N, replace = TRUE),
+                AGE65 = ifelse(BAGE < 65, "< 65", ">= 65"),
+                REGION = sample(c("EU", "US"), size = N, replace = TRUE),
+                BASEUA = sample(c("<= 2 (cm^2)", "> 2 (cm^2)"), size = N, replace = TRUE),
+                BASE = sample(seq(3, 7, by= 0.1), size = N, replace = TRUE),
+                WEIGHT = sample(seq(40, 90, by = 0.5), size = N, replace = TRUE),
+                HBA1C = sample(seq(5.5, 12.2, by = 0.2), size = N, replace = TRUE),
+                SAFFL = sample(c("Y", "N"), size = N, replace = TRUE),
+                ITTFL = sample(c("Y", "N"), size = N, replace = TRUE),
+                TRT = factor(TRT),
+                ARM = factor(ARM)
+                )
+
+#ASL <- var_relabel(ASL, BAGE = "Age", SEX = "Sex", AGE65 = "Age group (years)", BASEUA = "Baseline Ulcer Area Category", BASE = "Baseline Ulcer Area (cm^2)",
+#                   HBA1C = "Baseline Hemoglobin A1C", WEIGHT = "Baseline Weight (kg)", REGION = "Region", USUBJID = "Subject Identifier",
+#                   ARM = "Study Arm", RACE = "Race", CHRT = "Treatment Group 1", TRT = "Treatment Group",
+#                   CHRTGRP ="Treatment Group 2", SAFFL = "Safety Flag", ITTFL = "Intent-to-Treat Flag", ARMCD = "Study Arm Code")
+
+ATE <- ASL %>%
+  dplyr::select(USUBJID) %>%
+  dplyr::slice(rep(1:n(), each = 2)) %>%
+  dplyr::mutate(PARAMCD = rep(c("TFUC", "TCUC"), length(unique(ASL$USUBJID))),
+                PARAM = ifelse(PARAMCD == "TFUC", "Time to First Ulcer Closure", "Time to Confirmed Ulcer Closure"),
+                CNSR = sample(c(0,0,0,1), size = N*2, replace = TRUE),
+                AVAL = sample(c(8:130), size=N*2, replace = TRUE),
+                AVALU = "Day") %>%
+  dplyr::left_join(ASL, by = c("USUBJID"))
+
+
+
+#ATE <- var_relabel(ATE, USUBJID = "Subject Identifier", PARAMCD = "Parameter Code", 
+#                   PARAM = "TTE Parameter Name", AVAL = "TTE Value", AVALU = "TTE Value Unit", CNSR = "Censor")
+
+AZA <- ASL %>%
+  dplyr::select(USUBJID) %>%
+  dplyr::slice(rep(1:n(), each = 18)) %>%
+  dplyr::mutate(ADY = rep(seq(1,120, by = 7), length(unique(ASL$USUBJID)))) %>%
+  dplyr::mutate(AVAL = sample(seq(0, 6, by= 0.1), size = n(), replace = TRUE)) %>%
+  dplyr::left_join(ASL, by = 'USUBJID') %>%
+  dplyr::group_by(USUBJID) %>%
+  dplyr::mutate(AVAL = ifelse(ADY == 1, BASE, AVAL),
+                CHG = AVAL - BASE,
+                PCHG = round((AVAL - BASE)*100/(BASE),2),
+                PDCR = ifelse(PCHG < 0, abs(PCHG), 0),
+                EPOCH = c(rep("SCREENING",2), rep("TREATMENT", 12), rep("OBSERVATION PERIOD", 4))
+                )
+
+BM <- ASL %>%
+  dplyr::select(USUBJID, CHRT, CHRTGRP, BASEUA) %>%
+  dplyr::slice(rep(1:n(), each = 3)) %>%
+  dplyr::mutate(ANALYTE = rep(c("S100A12", "Calprotectin", "HSA"), length(unique(ASL$USUBJID)))) %>%
+  dplyr::slice(rep(1:n(), each = 4)) %>%
+  dplyr::mutate(ADY = rep(c(1, 22, 43, 120), length(unique(ASL$USUBJID))*3),
+                AVAL = sample(seq(30, 1000, by = 0.5), size = n(), replace = TRUE))
+
+BM_base <- BM %>%
+  dplyr::filter(ADY == 1) %>%
+  dplyr::rename(BASE = AVAL) %>%
+  dplyr::select(USUBJID, ANALYTE, BASE)
+
+BM <- BM %>%
+  dplyr::left_join(BM_base, by = c('USUBJID', 'ANALYTE')) %>%
+  dplyr::mutate(CHG = round(AVAL - BASE,2),
+                PCHG = 100*CHG/BASE)
 
 #########################################################,
 #### Application Components
@@ -160,17 +242,15 @@ ui <- dashboardPage(
                     h4("Data Dependencies"),
                     code('none'), br(),
                     "The original data depends on snapshot data from the official study database. 
-                    For this sample app, all data displayed are from a randomly generated dummy data set."
+                    For this sample app, all data displayed are randomly generated."
                 ),
                 box(width = 9,
                     status = "primary",
                     h4("About This App"),
-                    p("This app was created as part of my internship projects at Genentech for the exploration of efficacy endpoints 
+                    p("This app was created as part of my internship projects at Genentech for the exploration of (mostly) efficacy endpoints 
                       of a randomized phase Ib study. The indication for this study is Diabetic Foot Ulcers (DFU) and the 
                       endpoints here are related to amount of ulcer healing (size) compared to baseline."),
                     tags$li("This modified version of the app is only intended to be a sample to showcase the types of functionality implemented in the project."),
-                    tags$li("The plots generated in this app use the ", tags$strong(code("effiplot")), 
-                            " R package that I developed. More detail about this package can be found here:", tags$a(href = "https://github.com/melren/effiplot", "https://github.com/melren/effiplot")),
                     tags$li(tags$strong("Due to confidentiality agreements, none of the data is real except the cohort grouping.")),
                     tags$li("If errors for the plots appear, please open the Filter/Plot Options panel to refresh the input."),
                     p(),
@@ -382,13 +462,13 @@ server <- function(input, output) {
   ## Logic
   getDataSet <- reactive({
     if(input$tabs == "demo") {
-      return(effiplot::ASL)
+      return(ASL)
     } else if (input$tabs == "tte") {
-      return(effiplot::ATE)
+      return(ATE)
     } else if (input$tabs %in% c("long","box","add")) {
-      return(effiplot::AZA)
+      return(AZA)
     } else if(input$tabs == "bm") {
-      return(effiplot::BM)
+      return(BM)
     } else {
       return(NULL)
     }
@@ -397,7 +477,8 @@ server <- function(input, output) {
   subsetData <- reactive({
     data <- getDataSet() %>%
       dplyr::mutate(CHRT = CHRT) %>%
-      dplyr::filter(CHRT %in% input$cohortSelection) 
+      dplyr::filter(CHRT %in% input$cohortSelection) #%>%
+      #dplyr::mutate(CHRT = factor(CHRT))
     
     if(!is.null(input$pooledSelection)){
       if(input$pooledSelection) {
@@ -475,16 +556,55 @@ server <- function(input, output) {
   tteplot <- reactive({
     event_param = input$tteTabs
     chrt = "CHRT"
-    input_data <- subsetData() %>%
-      dplyr::mutate(CHRT = factor(CHRT))
+    input_data <- subsetData()
+    form <- as.formula(paste("Surv(AVAL, 1-CNSR)", chrt, sep = " ~ "))
+    substitute(survfit(form, 
+                       data = input_data[input_data[["PARAMCD"]]==event_param,],
+                       conf.type = "log-log",
+                       conf.int = 0.8))
+    fit<- eval(substitute(survfit(form, data = input_data[input_data[["PARAMCD"]]==event_param,])))
     
+    #define color, line type, label of ordered cohort
+    linecolor=c("black","red","dark green","orange","blue","magenta")
+    linetype=c(1,2,4,6,1,3)
     #define dynamic title
     event = ifelse(event_param=="TFUC", "First", "Confirmed")
-    title = paste("Time to", event, "Ulcer Closure")
+    detail = ""#ifelse(!missing(desc), paste(",",desc), "")
+    title = paste("Time to", event, "Ulcer Closure", detail)
     
-    effiplot::tteplot(data = input_data, group_by = "CHRT", param = input$tteTabs,
-                      reverse = TRUE, title = title,
-                      xlab = "Time (Days)", ylab = "Proportion of patients \nwith Ulcer Closure", size = "large")
+    ggsurvplot(
+      fit,                     # survfit object with calculated statistics.
+      data = input_data[input_data[["PARAMCD"]]==event_param,],
+      fun="event",
+      censor=TRUE,
+      censor.shape="+",
+      xlim=c(0,135),  #xlim = c(0,fit$maxtime+1),
+      ylim = c(0,1),
+      xlab = "Time (Days)",    # customize X axis label.
+      ylab = "Proportion of patients \nwith Ulcer Closure",
+      break.time.by = 5,       # break X axis in time intervals by 500.
+      ########## theme #########,
+      #ggtheme = theme_classic(),    # theme_light(), # customize plot and risk table with a theme.
+      palette = linecolor,      # custom color palettes.
+      linetype= linetype,       # custom line type.
+      #caption = hrcaption,
+      font.x = 16,
+      font.y = 16,
+      font.tickslab = 14,
+      ########## legend #########,
+      #legend=c(0.1,0.75),
+      legend.labs = str_wrap(levels(factor(input_data$CHRT)), 15),
+      font.legend = c(12,"plain", "black"),
+      legend.title=" ",
+      ########## risk table #########,
+      risk.table = TRUE,       # show risk table.
+      risk.table.y.text.col = T,# colour risk table text annotations.
+      risk.table.y.text = T, #FALSE, # show bars instead of names in text annotations in legend of risk table.
+      risk.table.fontsize=4,
+      #risk.table.height = 0.3,
+      ########## plot title ######,
+      title=""
+    )
   })
   
   ttetbl <- reactive({
@@ -554,6 +674,41 @@ server <- function(input, output) {
     input_data <- subsetData()
     y_val=ifelse(is.null(input$long_stat_yvalSelection),"AVAL",input$long_stat_yvalSelection)
     stat= ifelse(is.null(input$long_statSelection),"mean",input$long_statSelection)
+    split = "CHRT"
+    
+    # String version of expression to be evaluated i.e. mean(val)
+    exprs=paste(stat,"(",y_val,")", sep="")
+    
+    plotdata<-input_data %>%
+      dplyr::group_by_(split, "ADY") %>%
+      dplyr::summarise(sum_stat=eval(parse(text=exprs)))
+    
+    npatient<-input_data %>%
+      dplyr::distinct_(split,"USUBJID") %>% 
+      dplyr::count_(split)
+    
+    
+    #define color, line type, label of ordered cohort
+    #gbreaks<-c(levels(factor(as.character((input_data[[split]])))))
+    gbreaks<-c(levels((input_data[[split]])))
+    
+    # Dynamically populate legend labels
+    glabels <- c()
+    
+    i = 1
+    for(cat in gbreaks){
+      glabels[i] = str_wrap(paste(cat," (n=", npatient[npatient[,1]==cat,]$n,")",sep=""),15)
+      i = i+1
+    }
+    gcolors<-c("black", "red", "dark green", "orange", "blue", "magenta")
+    glines<-c(1,2,4,6,1,3)
+    gwidths<-rep(0.8,length(gbreaks))
+    
+    # Different y-scale for different plot types
+    y_scl = seq(0,5,0.5)
+    if(y_val=="PDCR"){
+      y_scl = seq(0,100,10)
+    }
     
     # Define dynamic title and labels
     title = ""
@@ -573,10 +728,37 @@ server <- function(input, output) {
     }
     
     pdcr_cap = ifelse(y_val =="PDCR","%Decrease=max(0, -%change).","")
-    cap = paste(pdcr_cap,"Missing value is imputed by carrying last non-missing observation forward.")
     
-    effiplot::lineplot(data = input_data, x = "ADY", y = y_val, group_by = "CHRT",
-                       stat = stat, markers = c(43,85), ylab = ylab, title = title, caption = cap, size = "large")
+    ggplot2::ggplot(data=plotdata,aes(x=ADY,y=sum_stat))+
+      theme_classic()+
+      geom_line(aes_string(color=split,linetype=split,size=split))+
+      geom_point(aes_string(color=split))+
+      geom_vline(xintercept=c(43,85),color="black",linetype=2)+
+      scale_color_manual(values=gcolors,
+                         breaks=gbreaks,
+                         labels=glabels)+
+      scale_linetype_manual(values=glines,
+                            breaks=gbreaks,
+                            labels=glabels)+
+      scale_size_manual(values=gwidths,
+                        breaks=gbreaks,
+                        labels=glabels)+
+      theme(plot.title = element_text(size=16),
+            legend.position = "top",
+            legend.key.size = unit(3,'lines'),
+            legend.title=element_blank(),
+            legend.text = element_text(size = 12),
+            axis.text = element_text(size=14),
+            axis.title = element_text(size=14),
+            plot.caption = element_text(size = 12,color = "red")
+      )+
+      scale_x_continuous(breaks=seq(0,120,5)) +
+      scale_y_continuous(breaks=y_scl) +
+      labs(title=title,
+           y=ylab,
+           x="Visit Day",
+           caption=paste(pdcr_cap,"Missing value is imputed by carrying last non-missing observation forward.")
+      )
     
   })
   
@@ -591,7 +773,11 @@ server <- function(input, output) {
   
   spPlot <- reactive({
     input_data = subsetData()
+    split = "CHRT"
     type = ifelse(is.null(input$long_sp_yvalSelection),"ua",input$long_sp_yvalSelection)
+    
+    gbreaks<-c(labels(input_data[[split]]))
+    glabels<-gbreaks
     
     plotdata<-input_data %>%
       dplyr::mutate(EPOCH=factor(EPOCH,
@@ -610,6 +796,14 @@ server <- function(input, output) {
     }
     
     # Define dynamic plot labels based on type
+    
+    # Default y-axis scale
+    logy_scl = c(0.01,0.1,1,10)
+    if(type=="pchg"){
+      logy_scl = c(1,10,100,500)
+    }
+    
+    # Default title
     title = "Individual Ulcer Area (cm^2)"
     ylab = "Log scale Ulcer Area (cm^2)"
     if(type=="abs"){
@@ -621,9 +815,35 @@ server <- function(input, output) {
       ylab = "Log scale %Change from Baseline Ulcer Area"
     }
     
-    effiplot::lineplot(data = plotdata, x = "ADY", y = "logval", group_by = "USUBJID", facet = "CHRT",
-                       log_y = TRUE, symb = "EPOCH", ylab = ylab, title = title,
-                       caption = "Missing value is imputed by carrying last non-missing observation forward.", size = "large")
+    ggplot2::ggplot(data=plotdata,aes(x=ADY,y=logval,group=as.factor(USUBJID)))+
+      theme_classic()+
+      facet_wrap(as.formula(paste("~",split)),nrow=length(gbreaks))+
+      geom_line(aes(color=USUBJID))+
+      geom_point(aes(color=USUBJID,shape=EPOCH,size=EPOCH))+
+      scale_size_manual(values=c(rep(0.8,4),2,2,2),  #line and symbol size
+                        breaks=gbreaks,
+                        labels=glabels)+
+      scale_shape_manual(values=c(3,17,15),
+                         breaks=c("SCREENING"="SCREENING",
+                                  "TREATMENT"="TREATMENT",
+                                  "OBSERVATION PERIOD"="OBSERVATION PERIOD"))+
+      guides(colour=F,
+             linetype=F)+
+      theme(plot.title = element_text(size=16),
+            strip.text = element_text(size=14),
+            legend.key.size = unit(2,'lines'),
+            legend.title=element_blank(),
+            legend.text = element_text(size = 12),
+            axis.text = element_text(size=14),
+            axis.title = element_text(size=14),
+            plot.caption = element_text(size = 12,color = "red")
+      )+
+      scale_x_continuous(breaks=seq(0,140,5)) +
+      scale_y_log10(breaks=logy_scl)+
+      labs(title=title,
+           y=ylab,
+           x="Visit Day",
+           caption="Missing value is imputed by carrying last non-missing observation forward.")
   })
   
   longCurrPlot <- reactive({
@@ -674,11 +894,13 @@ server <- function(input, output) {
   ## Logic
   boxPlot <- reactive({
     input_data = subsetData()
+    split = input$box_xSplitSelection
+    glabels <- c("<= 2 (cm^2)","> 2 (cm^2)")
+    gbreaks <- glabels
+    gcolors<-c("blue","red")
     
     y_lab = ifelse(input$boxtabs=="PDCR","%Decrease in ","")
     units = ifelse(input$boxtabs=="PDCR",""," (cm^2)")
-    title=paste0("Boxplot of ", y_lab,"Ulcer Area at Week 6 and Week 12 (eCRF)")
-    ylab = paste0(y_lab,"Ulcer Area", units)
     
     plotdata<-input_data %>%
       dplyr::filter(ADY %in% c(43,85)) %>%
@@ -686,10 +908,29 @@ server <- function(input, output) {
       dplyr::mutate(daylabel=factor(daylabel,levels=c("Week 6 (Day = 43)","Week 12 (Day = 85)"))) %>%
       dplyr::mutate(uabase_ordered=factor(BASEUA,levels=c("<= 2 (cm^2)","> 2 (cm^2)")))
     
-    effiplot::boxplot(
-      data = plotdata, group_by = input$box_xSplitSelection, y = input$boxtabs, color_by = "uabase_ordered",
-      facet = "daylabel", title = title, xlab = "", ylab = ylab, size = "large", show_n = FALSE
-    )
+    ggplot2::ggplot(data=plotdata,aes_string(x=split,y=input$boxtabs))+
+      theme_classic()+
+      facet_wrap(~daylabel)+
+      geom_boxplot(outlier.color = "white", outlier.size = 2)+
+      stat_summary(fun.y=mean,color="black",geom="point",shape=18,size=3,show.legend=FALSE)+
+      geom_jitter(aes_string(y=input$boxtabs, x=split,color="uabase_ordered"), width=0.10)+
+      scale_color_manual(name="Baseline Ulcer Area",
+                         values=gcolors,
+                         breaks=gbreaks,
+                         labels=glabels)+
+      theme(plot.title = element_text(size=16),
+            strip.text = element_text(size=14),
+            legend.title = element_text(size=14),
+            legend.text = element_text(size = 12),
+            legend.position = "top",
+            axis.text = element_text(size=12),
+            axis.title = element_text(size=14)
+      )+
+      labs(title=paste("Boxplot of ", y_lab,"Ulcer Area at Week 6 and Week 12 (eCRF)", sep=""),
+           y=paste(y_lab,"Ulcer Area", units, sep=""),
+           x="",
+           fill = "Baseline Ulcer Area")+
+      scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
   })
   
   boxdata <- reactive({
@@ -770,15 +1011,45 @@ server <- function(input, output) {
     plot_data <-input_data %>%
       dplyr::left_join(uniqueid_d43_d85 %>% 
                          dplyr::select(USUBJID,xn),
-                       by=c("USUBJID","CHRT"))  %>%
-      dplyr::mutate(patnum=USUBJID) %>%
-      dplyr::mutate(RPDCR = -PDCR)
+                       by=c("USUBJID","CHRT")) %>%
+      dplyr::mutate(patnum=USUBJID) 
     
-    effiplot::grdplot(
-      type = type, data = plot_data, x = "xn", y = "ADY", facet = "CHRT", ord = "PDCR",
-      ord_lbl = "patnum", reverse=TRUE, ncol = 3, xlab = "Patients", leglab = "Ulcer Area % Decr from BL",
-      title = "% Decrease in Ulcer Area", size = "large"
-    )
+    ggplot(plot_data, aes(x=xn, y=ADY)) + 
+    {if(type=="bubble")geom_point(aes(size = -PDCR, color = PDCR))}+
+    {if(type=="bubble")guides(colour = guide_colourbar(order = 2),size = guide_legend(order = 1))}+
+    {if(type=="bubble")scale_color_gradient(low = "red", high = "steelblue")}+
+    {if(type=="heat")geom_tile(aes(fill = PDCR),color = "white")}+
+    {if(type=="heat")scale_fill_gradient(low = "red", high = "steelblue", na.value = "white")}+
+      facet_wrap(~CHRT,scale="free_x",ncol=4)+
+      scale_x_discrete(breaks=plot_data$xn,labels=plot_data$patnum)+
+      scale_y_continuous(trans = "reverse", 
+                         breaks = unique(plot_data$ADY))+
+      scale_size_continuous(labels=c(100,75,50,25,0),range = c(0.1, 3)) +
+      
+      labs(x = 'Patients', y = "Study Day", 
+           title = '% Decrease in Ulcer Area',
+           size = 'Ulcer Area % Decr from BL',
+           fill = 'Ulcer Area % Decr from BL',
+           color = '') + 
+      theme_bw() +
+      theme(
+        
+        legend.key.size = unit(3,'lines'),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 14),
+        plot.title = element_text(size=16),
+        axis.title=element_text(size=16,face="bold"),
+        axis.text.x = element_text(size = 14, angle = 90, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        axis.line = element_line(size=1, colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        strip.background = element_rect(fill="lightgrey"),
+        #strip.background = element_rect(fill="#fff5f0"),
+        strip.text.x = element_text(size = 12),
+        legend.position = "bottom"
+      ) 
   })
   
   gradientdata <- reactive({
@@ -904,53 +1175,124 @@ server <- function(input, output) {
   
   ## Logic
   bmData <- reactive({
-    data <- subsetData() %>%
-      dplyr::filter(ANALYTE == input$bm_anltSelection)
-    
+    data <- bmSubset()
     if(input$bmtabs == "subj"){
       data <- data %>%
         dplyr::select(USUBJID, ANALYTE, CHRT, ADY, AVAL, BASE, CHG, PCHG, BASEUA)
       colnames(data) <- c("Subject ID", "Analyte", "Cohort", "Analysis Day", "Lab Value", "Baseline Value",
                           "Change from Baseline", "% Change", "Baseline Ulcer Area")
     } else {
-      data <- data %>%
-        dplyr::select(USUBJID, ANALYTE, CHRT, ADY, PCHG) %>%
-        dplyr::group_by(ANALYTE, CHRT, ADY) %>%
-        dplyr::mutate(meanPCHG = mean(PCHG, na.rm = TRUE),
-                      medPCHG = median(PCHG, na.rm = TRUE)) %>%
-        dplyr::arrange(ANALYTE, CHRT, ADY) %>%
-        dplyr::filter(row_number() == 1) %>%
-        dplyr::ungroup() %>%
-        dplyr::select(-PCHG)
       colnames(data) <- c("Subject ID", "Analyte","Cohort", "Analysis Day", "Mean % Change",
                           "Median % Change")
     }
     return(data)
   })
   
+  bmSubset <- reactive({
+    data <- subsetData() %>%
+      dplyr::filter(ANALYTE == input$bm_anltSelection)
+    
+    if(input$bmtabs == "cohort"){
+      data <- data %>%
+        dplyr::select(USUBJID, ANALYTE, CHRT, ADY, PCHG) %>%
+        dplyr::group_by(ANALYTE, CHRT, ADY) %>%
+        dplyr::mutate(meanPCHG = mean(PCHG, na.rm = TRUE),
+                      medPCHG = median(PCHG, na.rm = TRUE)) %>%
+        dplyr::arrange(ANALYTE, CHRT, ADY) %>%
+        dplyr::ungroup() %>%
+        dplyr::select(-PCHG)
+    }
+    return(data)
+  })
+  
   bmSub <- reactive({
+    input_data <- bmSubset()
+    split = "CHRT"
     type = input$bm_anltSelection
-    input_data <- subsetData() %>%
-      dplyr::filter(ANALYTE == type)
+    gbreaks<-c(levels(input_data[[split]]))
+    glabels<-gbreaks
     
     title = paste("Percent Change in", type)
     ylab = "%Change from Baseline Measurement"
     
-    effiplot::lineplot(data = input_data, x = "ADY", y = "AVAL", group_by = "USUBJID", aggr = "USUBJID", facet = "CHRT",
-                       ylab = ylab, title = title, size = "large")
+    ggplot2::ggplot(data=input_data,aes(x=ADY,y=PCHG,group=as.factor(as.character(USUBJID))))+
+      theme_classic()+
+      facet_wrap(as.formula(paste("~",split)),nrow=length(gbreaks))+
+      geom_line(aes(color=as.factor(USUBJID)))+
+      geom_point(aes(color=as.factor(USUBJID)))+
+      scale_size_manual(values=c(rep(0.8,4),2,2,2),  #line and symbol size
+                        breaks=gbreaks,
+                        labels=glabels)+
+      guides(colour=F,
+             linetype=F)+
+      theme(plot.title = element_text(size=16),
+            legend.key.size = unit(3,'lines'),
+            legend.text = element_text(size = 12),
+            axis.title = element_text(size=14),
+            axis.text = element_text(size=14),
+            strip.text = element_text(size=12),
+            legend.title=element_blank())+
+      scale_x_continuous(breaks=seq(0,140,5)) +
+      #ylim(-100,800)+
+      labs(title=title,
+           y=ylab,
+           x="Visit Day")
   })
   
   bmChrt <- reactive({
+    input_data <- bmSubset()
+    split = "CHRT"
     type = input$bm_anltSelection
     stat = ifelse(is.null(input$bm_statSelection), "Mean", input$bm_statSelection)
-    input_data <- subsetData() %>%
-      dplyr::filter(ANALYTE == type)
-  
+    
+    if(stat == "Mean"){
+      input_data <- input_data %>%
+        dplyr::mutate(val = meanPCHG)
+    } else {
+      input_data <-input_data %>%
+        dplyr::mutate(val = medPCHG)
+    }
+    
+    npatient<-input_data %>%
+      dplyr::distinct_(split,"USUBJID") %>%
+      dplyr::count_(split)
+    
+    gbreaks<-c(levels(input_data[[split]]))
+    #glabels<-gbreaks
+    # Dynamically populate legend labels
+    glabels <- c()
+    i = 1
+    for(cat in gbreaks){
+      glabels[i] = str_wrap(paste(cat," (n=", npatient[npatient[,1]==cat,]$n,")",sep=""),15)
+      i = i+1
+    }
+    
+    
     title = paste(stat, "Percent Change in", type, "by Cohort")
     ylab = paste(stat, "%Change from Baseline Measurement")
     
-    effiplot::lineplot(data = input_data, x = "ADY", y = "PCHG", stat = tolower(stat), group_by = "CHRT", aggr = "USUBJID",
-                       ylab = ylab, title = title, size = "large")
+    ggplot2::ggplot(data=input_data,aes(x=ADY,y=val,group=as.factor(as.character(CHRT))))+
+      theme_classic()+
+      geom_line(aes(color=as.factor(CHRT)))+
+      geom_point(aes(color=as.factor(CHRT)))+
+      scale_size_manual(values=c(rep(0.8,4),2,2,2),  #line and symbol size
+                        breaks=gbreaks,
+                        labels=glabels)+
+      scale_color_discrete( #line and symbol size
+        breaks=gbreaks,
+        labels=glabels)+
+      theme(plot.title = element_text(size=16),
+            legend.key.size = unit(3,'lines'),
+            legend.text = element_text(size = 12),
+            axis.title = element_text(size=14),
+            axis.text = element_text(size=14),
+            legend.title=element_blank())+
+      
+      scale_x_continuous(breaks=seq(0,140,5)) +
+      #ylim(-100,600)+
+      labs(title=title,
+           y=ylab,
+           x="Visit Day")
     
   })
   

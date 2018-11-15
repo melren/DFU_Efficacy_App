@@ -5,8 +5,9 @@ account: melren
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 485546
-bundleId: 1619147
+bundleId: 1702835
 url: https://melren.shinyapps.io/DFU_Efficacy_App/
-when: 1538522440.74057
+when: 1542303873.14744
 asMultiple: FALSE
 asStatic: FALSE
+ignoredFiles: app2.R
