@@ -15,3 +15,5 @@ If errors for the plots appear, please open the Filter/Plot Options panel to ref
   * This is due to different types of plots requiring different parameters
   * When the panel is closed, previously unset variables are treated as NULL
   * If the download plot button is not working, the plots can be downloaded from the right-click menu
+  
+Plots are generated with a custom package I developed called **effiplot**: https://github.com/melren/effiplot
